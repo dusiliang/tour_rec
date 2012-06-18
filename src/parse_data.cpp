@@ -6,10 +6,10 @@
 #include <vector>
 #include <map>
 #include <set>
+#include "libjson.h"
 #include "ICTCLAS50.h"
 #include "log.h"
 #include "data_struct.h"
-#include "process_data.h"
 
 using namespace std;
 
@@ -23,23 +23,49 @@ static bool compare_msg(msg_t m1, msg_t m2) {
     return m1.score > m2.score;
 }
 
+inline void check_user(user_t &user, uid_user_map_t &uum) {
+    if (uum.find(user.uid) == uum.end()) {
+        uum[user.uid] = user;
+    }
+}
+
 int load_file(const string &filename,
         uid_user_map_t &uum,
-        uid_home_map_t &uhm,
-        mid_content_map_t &mcm,
+        vector<msg_t> &msg_vec,
         log_t *log) {
     ifstream ifile;
     string line;
     string content;
     string home;
-    size_t pos1, pos2;
-    long uid, mid;
+    long uid;
     int num = 0;
 
     ifile.open(filename.c_str());
     if (ifile.is_open()) {
         while (getline(ifile, line)) {
             //mid uid provience city content
+            msg_t one_msg;
+            user_t one_user = {-1, "", ""};
+            JSONNode node = libjson::parse(line);
+            JSONNode::const_iterator jit = node.begin();
+            while (jit != node.end()) {
+                string name = string(jit->name());
+                if (name == "id") {
+                    one_msg.mid = atol(jit->as_string().c_str());
+                } else if (name == "user_id") {
+                    uid = atol(jit->as_string().c_str());
+                    one_user.uid = uid;
+                    one_msg.uid = uid;
+                } else if (name == "user_name") {
+                    one_user.name = jit->as_string();
+                } else if (name == "location") {
+                    one_user.home = jit->as_string();
+                } else if (name == "text") {
+                    one_msg.content = jit->as_string();
+                }
+            }
+            check_user(one_user, uum);
+            /*
             pos1 = line.find(SPLIT_SYMBLE);
             if (pos1 != string::npos) {
                 mid = atol(line.substr(0, pos1).c_str());
@@ -76,6 +102,7 @@ int load_file(const string &filename,
                 uum[uid].mids.push_back(mid);
             }
             mcm[mid] = content;
+            */
             ++num;
         }
         ifile.close();
@@ -92,20 +119,21 @@ inline bool is_ns(const string &str) {
         return false;
 }
 
-int parse_content(mid_content_map_t &mcm,
-        mid_word_map_t &mwm,
+int parse_content(uid_user_map_t &uum,
+        vector<msg_t> &msg_vec,
         log_t *log) {
     char buf[2048];
     string result;
 
-    for (mid_content_map_t::iterator it = mcm.begin(); it != mcm.end(); ++it) {
-        size_t pos1, pos2 = 0;
-        if (ICTCLAS_ParagraphProcess(it->second.c_str(),
-                                     it->second.length(),
+    for (vector<msg_t>::iterator it = msg_vec.begin(); it != msg_vec.end(); ++it) {
+        if (ICTCLAS_ParagraphProcess(it->content.c_str(),
+                                     it->content.length(),
                                      buf,
                                      CODE_TYPE_UNKNOWN,
                                      1)
             ) {
+                it->ns_word = buf;
+            /*
             result = buf;
             if (mwm.find(it->first) == mwm.end()) {
                 vector<string> tmp;
@@ -118,140 +146,18 @@ int parse_content(mid_content_map_t &mcm,
                 }
                 pos2 = pos1 + 1;
             }
+            */
         } else {
-            error(log, "message %ld process error!", it->first);
+            error(log, "message %ld process error!", it->mid);
         }
     }
 
     return 0;
 }
 
-void rank_user(mid_content_map_t &mcm,
-        uid_user_map_t &uum,
-        mid_word_map_t &mwm,
-        vector<msg_t> &msg_rank) {
-    for (uid_user_map_t::iterator uit = uum.begin();
-         uit != uum.end(); ++uit) {
-        for (vector<long>::iterator mit = uit->second.mids.begin();
-             mit != uit->second.mids.end(); ++mit) {
-            msg_t msg = {*mit, uit->first, 0, NULL, mcm[*mit], ""};
-            mid_word_map_t::iterator it = mwm.find(*mit);
-            if (it != mwm.end()) {
-                msg.score = it->second.size();
-#if 0
-                for (vector<string>::iterator it_word = it->second.begin();
-                     it_word != it->second.end(); ++it_word) {
-                    msg.ns_word.append(*it_word);
-                }
-#endif
-            }
-            if (msg.score > 0)
-                msg_rank.push_back(msg);
-        }
-    }
-}
-
-void out_put(vector<msg_t> &msg_rank,
-             const string &path,
-             const string &filename) {
-    ofstream ofile;
-    ofile.open((path+filename).c_str());
-    if (ofile.is_open()) {
-        for (vector<msg_t>::iterator it = msg_rank.begin();
-             it != msg_rank.end(); ++it) {
-            if ((it->lid == NULL) || (it->lid->size() == 0))
-    	        continue;
-            ofile << it->mid << " " << it->uid;
-            for (set<int>::iterator sit = it->lid->begin();
-                 sit != it->lid->end(); ++sit) {
-                  ofile << " " << *sit;
-            }
-            ofile << endl;
-        }
-        ofile.close();
-    }
-}
-
-int load_line(const string &file, map<int, line_t> &line_map) {
-    ifstream ifile;
-    int lid;
-    int num = 0;
-    string home;
-    ifile.open(file.c_str());
-    if (ifile.is_open()) {
-        string line;
-        while (getline(ifile, line)) {
-            vector<string> des_vec;
-            size_t pos1, pos2 = 0;
-            pos1 = line.find(SPLIT_SYMBLE);
-            lid = atoi(line.substr(0, pos1).c_str());
-            ++pos1;
-            pos2 = line.find(SPLIT_SYMBLE, pos1);
-            home = line.substr(pos1, pos2-pos1);
-            pos1 = pos2 + 1;
-
-            while ((pos2 = line.find(SPLIT_SYMBLE, pos1)) != string::npos) {
-                des_vec.push_back(line.substr(pos1, pos2-pos1));
-                pos1 = pos2 + 1;
-            }
-            des_vec.push_back(line.substr(pos1));
-            line_t tmp = {lid, home, des_vec};
-            line_map[lid] = tmp;
-            ++num;
-        }
-        ifile.close();
-    }
-    return num;
-}
-
-void show_line(vector<line_t> &lines) {
-    for (vector<line_t>::iterator it = lines.begin();
-         it != lines.end(); ++it) {
-        cout << it->lid << " " << it->home << " to:";
-        for (vector<string>::iterator itt = it->des.begin();
-             itt != it->des.end(); ++itt) {
-            cout << " " << *itt;
-        }
-        cout << endl;
-    }
-}
-
-void fill_result(mid_lid_map_t &mlm,
-                 vector<msg_t> &msg_rank) {
-    for (vector<msg_t>::iterator it = msg_rank.begin();
-         it != msg_rank.end(); ++it) {
-        if (mlm[it->mid].size() > 0)
-            it->lid = &mlm[it->mid];
-    }
-}
-
-int main(int argc, char **argv) {
+int init_ictclas(log_t *log, const string &init_path) {
     int num;
-    string raw_file(DATA_DIR+"raw.txt");
-    string line_file(DATA_DIR+"line_keyword.txt");
-    string out_file(DATA_DIR+"parse_data.txt");
-    uid_user_map_t uid_user_map;
-    mid_content_map_t mid_content_map;
-    mid_word_map_t mid_word_map;
-    mid_lid_map_t mid_lid_map;      //message id to line id
-    uid_home_map_t uid_home_map;  //user id to home
-    vector<msg_t> msg_rank;
-    map<int, line_t> line_map;
-
-    if (argc == 4) {
-        raw_file = argv[1];
-        line_file = argv[2];
-        out_file = argv[3];
-    } else {
-        cout << "usage: " << argv[0] << " weibo_msg_file line_file output_file"
-             << endl;
-        return -1;
-    }
-
-    log_t *log = create_log((LOGS_DIR+"parse_data").c_str());
-    info(log, "parse_data start!");
-
-    if (!ICTCLAS_Init(INIT_DIR.c_str())) {
+    if (!ICTCLAS_Init(init_path.c_str())) {
         error(log, "ICTCLAS_Init error!");
         return -1;
     } else {
@@ -265,20 +171,97 @@ int main(int argc, char **argv) {
         info(log, "load %d items from UserDict.txt", num);
         ICTCLAS_SaveTheUsrDic();
     }
+    return 0;
+}
 
-    num = load_file(raw_file, uid_user_map, uid_home_map, mid_content_map, log);
-    info(log, "message num: %d, message map size: %ld", num, mid_content_map.size());
-    parse_content(mid_content_map, mid_word_map, log);
-    rank_user(mid_content_map, uid_user_map, mid_word_map, msg_rank);
-    sort(msg_rank.begin(), msg_rank.end(), compare_msg);
+void out_put(vector<msg_t> &msg_vec,
+             uid_user_map_t &uum,
+             const string &path,
+             const string &filename) {
+    size_t pos1, pos2 = 0;
+    ofstream ofile;
+    ofile.open((path+filename).c_str());
+    if (ofile.is_open()) {
+        //id, user_id, user_name, location, words
+        for (vector<msg_t>::iterator it = msg_vec.begin();
+             it != msg_vec.end(); ++it) {
+            if ((it->lid == NULL) || (it->lid->size() == 0))
+    	        continue;
+            JSONNode root_node(JSON_NODE);
+            root_node.push_back(JSONNode("id", it->mid));
+            root_node.push_back(JSONNode("user_id", it->uid));
+            root_node.push_back(JSONNode("user_name", uum[it->uid].name));
+            root_node.push_back(JSONNode("location", uum[it->uid].home));
+            //ofile << it->mid << " " << it->uid;
+            JSONNode words(JSON_ARRAY);
+            words.set_name("words");
+            while ((pos1 = it->content.find(" ", pos2)) != string::npos) {
+                string word = it->content.substr(pos1, pos1-pos2);
+                words.push_back(JSONNode("", word));
+                pos2 = pos1 + 1;
+            }
+            root_node.push_back(words);
+            ofile << root_node.write_formatted() << endl;
+        }
+        ofile.close();
+    }
+}
 
-    //load travel line
-    num = load_line(line_file, line_map);
-    //show_line(line_vector);
-    match_msg(mid_word_map, line_map, mid_lid_map);
-    fill_result(mid_lid_map, msg_rank);
-    do_filter_by_user(uid_user_map, line_map, msg_rank);
-    out_put(msg_rank, "", out_file);
+/*
+void fill_msg(mid_content_map_t &mcm,
+        uid_user_map_t &uum,
+        mid_word_map_t &mwm,
+        vector<msg_t> &msg_vec) {
+    for (uid_user_map_t::iterator uit = uum.begin();
+         uit != uum.end(); ++uit) {
+        for (vector<long>::iterator mit = uit->second.mids.begin();
+             mit != uit->second.mids.end(); ++mit) {
+            msg_t msg = {*mit, uit->first, 0, NULL, mcm[*mit], ""};
+            mid_word_map_t::iterator it = mwm.find(*mit);
+            if (it != mwm.end()) {
+                msg.score = it->second.size();
+#if 1
+                for (vector<string>::iterator it_word = it->second.begin();
+                     it_word != it->second.end(); ++it_word) {
+                    msg.ns_word.push_back(*it_word);
+                }
+#endif
+            }
+            if (msg.score > 0)
+                msg_vec.push_back(msg);
+        }
+    }
+}
+*/
+
+int main(int argc, char **argv) {
+    int num;
+    string raw_file(DATA_DIR+"raw.txt");
+    string line_file(DATA_DIR+"line_keyword.txt");
+    string out_file(DATA_DIR+"parse_data.txt");
+    uid_user_map_t uid_user_map;
+    vector<msg_t> msg_vec;
+
+    if (argc == 4) {
+        raw_file = argv[1];
+        line_file = argv[2];
+        out_file = argv[3];
+    } else {
+        cout << "usage: " << argv[0] << " weibo_msg_file line_file output_file"
+             << endl;
+        return -1;
+    }
+
+    log_t *log = create_log((LOGS_DIR+"parse_data").c_str());
+    info(log, "parse_data start!");
+    init_ictclas(log, INIT_DIR);
+
+    num = load_file(raw_file, uid_user_map, msg_vec, log);
+    parse_content(uid_user_map, msg_vec, log);
+    info(log, "parse complete");
+    //fill_msg(mid_content_map, uid_user_map, mid_word_map, msg_vec);
+    //sort(msg_vec.begin(), msg_vec.end(), compare_msg);
+    out_put(msg_vec, uid_user_map, "", out_file);
 
     ICTCLAS_Exit();
     destory_log(log);
