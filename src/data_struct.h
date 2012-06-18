@@ -21,8 +21,9 @@ struct line_t {
 
 struct user_t {
     long uid;
+    string name;
     string home;
-    vector<long> mids;
+    //vector<long> mids;
 };
 
 typedef map<long, user_t> uid_user_map_t;
