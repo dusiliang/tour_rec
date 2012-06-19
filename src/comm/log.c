@@ -31,6 +31,7 @@ static inline void write_log(const char *buf, log_t *log) {
     if ((log != NULL) && (log->fp != NULL) && (buf != NULL)) {
         pthread_mutex_lock(&log->lock);
         fputs(buf, log->fp);
+        fflush(log->fp);
         pthread_mutex_unlock(&log->lock);
     }
 }
