@@ -20,7 +20,10 @@ json:
 ../comm/*.o: ../comm/*.c* ../comm/*.h
 	make -C ../comm
 
+one: parse_one.cpp
+	$(CC) $(FLAG) parse_one.cpp -o parse_one $(INCLUDE) $(LD_PATH) $(LIBS)
+
 clean:
+	rm parse_data
 	make clean -C ../comm
 	make clean -C ../libjson
-	rm parse_data
