@@ -79,7 +79,7 @@
  *  means that libjson supports the full array of unicode characters, but also takes
  *  much more memory and processing power.
  */
-#define JSON_UNICODE
+//#define JSON_UNICODE
 
 
 /*
